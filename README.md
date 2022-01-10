@@ -17,7 +17,19 @@ npm install saros-sdk
 # Usage
 
 ```javascript
-import sarosSdk from 'saros-sdk';
+import {
+  getSwapAmountSaros,
+  swapSaros,
+  createPool,
+  getPoolInfo,
+  depositAllTokenTypes,
+  withdrawAllTokenTypes,
+  convertBalanceToWei,
+  getTokenMintInfo,
+  getTokenAccountInfo,
+  getInfoTokenByMint,
+  genConnectionSolana,
+} from 'saros-sdk';
 import bigdecimal from 'bigdecimal';
 import { Connection, PublicKey } from '@solana/web3.js';
 
@@ -32,7 +44,7 @@ const FEE_OWNER = 'FDbLZ5DRo61queVRH9LL1mQnsiAoubQEnoCRuPEmH9M8';
 const mintAddressUsdt = 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB';
 const mintAddressUsdc = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 const SLIPPAGE = 0.5;
-const connection = new Connection('https://orca.rpcpool.com/');
+const connection = genConnectionSolana();
 const accountSol = '5UrM9csUEDBeBqMZTuuZyHRNhbRW4vQ1MgKJDrKU1U2v'; // address wallet Sol
 
 // example pool saros C98 to USDC
@@ -73,16 +85,6 @@ const poolParams = {
   ],
 };
 
-const convertBalanceToWei = (strValue, iDecimal = 18) => {
-  try {
-    const multiplyNum = new bigdecimal.BigDecimal(Math.pow(10, iDecimal));
-    const convertValue = new bigdecimal.BigDecimal(String(strValue));
-    return multiplyNum.multiply(convertValue).toString().split('.')[0];
-  } catch (err) {
-    return 0;
-  }
-};
-
 const handleSwap = async () => {
   const fromTokenAccount = C98_TOKEN.addr;
   const toTokenAccount = USDC_TOKEN.addr;
@@ -90,7 +92,7 @@ const handleSwap = async () => {
   const toMint = USDC_TOKEN.mintAddress;
   const fromAmount = 1;
   // getSwapAmountSaros to calculate output pool saros
-  const estSwap = await sarosSdk.getSwapAmountSaros(
+  const estSwap = await getSwapAmountSaros(
     connection,
     fromMint,
     toMint,
@@ -99,7 +101,7 @@ const handleSwap = async () => {
     poolParams
   );
   const { amountOutWithSlippage } = estSwap;
-  const result = await sarosSdk.swapSaros(
+  const result = await swapSaros(
     connection,
     fromTokenAccount.toString(),
     toTokenAccount.toString(),
@@ -132,7 +134,7 @@ const handleCreatePool = async () => {
   const curveParameter = isStableCoin ? 1 : 0;
   const convertFromAmount = convertBalanceToWei(1, USDC_TOKEN.decimals);
   const convertToAmount = convertBalanceToWei(1, C98_TOKEN.decimals);
-  const response = await sarosSdk.createPool(
+  const response = await createPool(
     connection,
     accountSol,
     new PublicKey(FEE_OWNER),
@@ -147,12 +149,15 @@ const handleCreatePool = async () => {
     TOKEN_PROGRAM_ID,
     SAROS_SWAP_PROGRAM_ADDRESS_V1
   );
-
-  console.log({ response });
+  const { isError } = result;
+  if (isError) {
+    return console.log(`${result.mess}`);
+  }
+  return `txs success hash to scan ${result.hash}`;
 };
 
 const handleAddLiquidPool = async () => {
-  const poolAccountInfo = await sarosSdk.getPoolInfo(
+  const poolAccountInfo = await getPoolInfo(
     connection,
     new PublicKey(poolParams.address)
   );
@@ -160,7 +165,7 @@ const handleAddLiquidPool = async () => {
   const token1Mint = USDC_TOKEN.mintAddress;
   const token0Account = C98_TOKEN.addr;
   const token1Account = USDC_TOKEN.addr;
-  const newPoolLpMintInfo = await sarosService.getTokenMintInfo(
+  const newPoolLpMintInfo = await getTokenMintInfo(
     connection,
     poolAccountInfo.lpTokenMint
   );
@@ -168,7 +173,7 @@ const handleAddLiquidPool = async () => {
     ? newPoolLpMintInfo.supply.toNumber()
     : 0;
   const convertFromAmount = convertBalanceToWei(1, USDC_TOKEN.decimals);
-  const newPoolToken0AccountInfo = await sarosService.getTokenAccountInfo(
+  const newPoolToken0AccountInfo = await getTokenAccountInfo(
     connection,
     poolAccountInfo.token0Account
   );
@@ -176,7 +181,7 @@ const handleAddLiquidPool = async () => {
     (parseFloat(convertFromAmount) * lpTokenSupply) /
     newPoolToken0AccountInfo.amount.toNumber();
 
-  const result = await sarosSdk.depositAllTokenTypes(
+  const result = await depositAllTokenTypes(
     connection,
     accountSol,
     new PublicKey(accountSol),
@@ -189,12 +194,15 @@ const handleAddLiquidPool = async () => {
     token1Mint,
     SLIPPAGE
   );
-
-  console.log({ result });
+  const { isError } = result;
+  if (isError) {
+    return console.log(`${result.mess}`);
+  }
+  return `txs success hash to scan ${result.hash}`;
 };
 
 const handleWithdraw = async () => {
-  const poolAccountInfo = await sarosSdk.getPoolInfo(
+  const poolAccountInfo = await getPoolInfo(
     connection,
     new PublicKey(poolParams.address)
   );
@@ -202,22 +210,19 @@ const handleWithdraw = async () => {
     ? poolAccountInfo.supply.toNumber()
     : 0;
   const lpTokenMint = poolAccountInfo.lpTokenMint.toString();
-  const newPoolToken0AccountInfo = await sarosService.getTokenAccountInfo(
+  const newPoolToken0AccountInfo = await getTokenAccountInfo(
     connection,
     poolAccountInfo.token0Account
   );
   const lpTokenAmount =
     (parseFloat(1) * lpTokenSupply) /
     newPoolToken0AccountInfo.amount.toNumber();
-  const infoLpUser = await sarosService.getInfoTokenByMint(
-    lpTokenMint,
-    accountSol
-  );
+  const infoLpUser = await getInfoTokenByMint(lpTokenMint, accountSol);
   const token0Mint = C98_TOKEN.mintAddress;
   const token1Mint = USDC_TOKEN.mintAddress;
   const token0Account = C98_TOKEN.addr;
   const token1Account = USDC_TOKEN.addr;
-  const result = await sarosSdk.withdrawAllTokenTypes(
+  const result = await withdrawAllTokenTypes(
     connection,
     accountSol,
     infoLpUser.pubkey,

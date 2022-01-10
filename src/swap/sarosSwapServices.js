@@ -1,45 +1,42 @@
 /* eslint-disable new-cap */
 import { SarosSwapInstructionService } from './sarosSwapIntructions';
 import { Keypair, PublicKey, SystemProgram } from '@solana/web3.js';
+import { cloneDeep } from 'lodash';
 import BN from 'bn.js';
-import { SolanaService } from '../common/solanaService';
 import {
+  HOST_FEE_DENOMINATOR,
+  HOST_FEE_NUMERATOR,
   INITIALIZE_MINT_SPAN,
   INITIALIZE_POOL_SPAN,
+  NATIVE_SOL,
+  OWNER_TRADING_FEE_DENOMINATOR,
+  OWNER_TRADING_FEE_NUMERATOR,
+  OWNER_WITHDRAW_FEE_DENOMINATOR,
+  OWNER_WITHDRAW_FEE_NUMERATOR,
   SAROS_SWAP_PROGRAM_ADDRESS_V1,
   TOKEN_PROGRAM_ID,
+  TRADING_FEE_DENOMINATOR,
+  TRADING_FEE_NUMERATOR,
 } from '../constants';
 import { TokenProgramInstructionService } from '../common/tokenProgramInstructionService';
-import {
-  genOwnerSolana,
-  messFail,
-  createAssociatedTokenAccountIfNotExist,
-  NATIVE_SOL,
-  deserializeAccount,
-  createTransactions,
-  sendTransaction,
-} from '../common/solana';
 import { closeAccount } from '@project-serum/serum/lib/token-instructions';
 import {
   convertBalanceToWei,
   convertWeiToBalance,
   renderAmountSlippage,
 } from '../functions';
-import { cloneDeep } from 'lodash';
 import {
   findAssociatedTokenAddress,
   getTokenAccountInfo,
   getTokenMintInfo,
+  genOwnerSolana,
+  messFail,
+  createAssociatedTokenAccountIfNotExist,
+  deserializeAccount,
+  createTransactions,
+  sendTransaction,
+  isAddressInUse,
 } from '../common';
-
-const TRADING_FEE_NUMERATOR = new BN(0);
-const TRADING_FEE_DENOMINATOR = new BN(10000);
-const OWNER_TRADING_FEE_NUMERATOR = new BN(30);
-const OWNER_TRADING_FEE_DENOMINATOR = new BN(10000);
-const OWNER_WITHDRAW_FEE_NUMERATOR = new BN(0);
-const OWNER_WITHDRAW_FEE_DENOMINATOR = new BN(0);
-const HOST_FEE_NUMERATOR = new BN(20);
-const HOST_FEE_DENOMINATOR = new BN(100);
 
 export const getPoolInfo = async (connection, poolAddress) => {
   const accountInfo = await connection.getAccountInfo(poolAddress);
@@ -108,12 +105,7 @@ export const createPool = async (
   );
   const poolLpMintAccount = Keypair.fromSeed(poolAuthorityAddress.toBuffer());
 
-  if (
-    !(await SolanaService.isAddressInUse(
-      connection,
-      poolLpMintAccount.publicKey
-    ))
-  ) {
+  if (!(await isAddressInUse(connection, poolLpMintAccount.publicKey))) {
     const lamportsToInitializeMint =
       await connection.getMinimumBalanceForRentExemption(INITIALIZE_MINT_SPAN);
     const initMintTransaction =
@@ -132,7 +124,7 @@ export const createPool = async (
     poolAuthorityAddress,
     token0MintAddress
   );
-  if (!(await SolanaService.isAddressInUse(connection, poolToken0Address))) {
+  if (!(await isAddressInUse(connection, poolToken0Address))) {
     const createATPATransaction =
       await TokenProgramInstructionService.createAssociatedTokenAccountTransaction(
         payerAccount.publicKey,
@@ -145,7 +137,7 @@ export const createPool = async (
     poolAuthorityAddress,
     token1MintAddress
   );
-  if (!(await SolanaService.isAddressInUse(connection, poolToken1Address))) {
+  if (!(await isAddressInUse(connection, poolToken1Address))) {
     const createATPATransaction =
       await TokenProgramInstructionService.createAssociatedTokenAccountTransaction(
         payerAccount.publicKey,
@@ -158,7 +150,7 @@ export const createPool = async (
     payerAccount.publicKey,
     poolLpMintAccount.publicKey
   );
-  if (!(await SolanaService.isAddressInUse(connection, poolLpTokenAddress))) {
+  if (!(await isAddressInUse(connection, poolLpTokenAddress))) {
     const createATPATransaction =
       await TokenProgramInstructionService.createAssociatedTokenAccountTransaction(
         payerAccount.publicKey,
@@ -174,7 +166,7 @@ export const createPool = async (
   );
   if (
     payerAccount.publicKey.toBase58() !== feeOwnerAddress.toBase58() &&
-    !(await SolanaService.isAddressInUse(connection, feeLpTokenAddress))
+    !(await isAddressInUse(connection, feeLpTokenAddress))
   ) {
     const createATPATransaction =
       await TokenProgramInstructionService.createAssociatedTokenAccountTransaction(
@@ -443,7 +435,7 @@ export const depositAllTokenTypes = async (
     poolAccountInfo.lpTokenMint
   );
 
-  if (!(await SolanaService.isAddressInUse(connection, userLpTokenAddress))) {
+  if (!(await isAddressInUse(connection, userLpTokenAddress))) {
     const createATPATransaction =
       await TokenProgramInstructionService.createAssociatedTokenAccountTransaction(
         payerAccount.publicKey,
@@ -571,9 +563,7 @@ export const swapSaros = async (
       hostFeeOwnerAddress,
       poolAccountInfo.lpTokenMint
     );
-    if (
-      !(await SolanaService.isAddressInUse(connection, hostFeeTokenAddress))
-    ) {
+    if (!(await isAddressInUse(connection, hostFeeTokenAddress))) {
       const createATPATransaction =
         await TokenProgramInstructionService.createAssociatedTokenAccountTransaction(
           owner.publicKey,
