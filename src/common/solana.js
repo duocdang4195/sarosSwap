@@ -15,6 +15,7 @@ import {
 import { convertWeiToBalance, sleep } from '../functions';
 import * as BufferLayout from 'buffer-layout';
 import { get } from 'lodash';
+import { cloneDeep } from 'lodash';
 
 const bs58 = require('bs58');
 const TOKEN_PROGRAM_ID = new PublicKey(
@@ -227,10 +228,6 @@ LAYOUT.addVariant(
   'burn'
 );
 
-const instructionMaxSpan = Math.max(
-  ...Object.values(LAYOUT.registry).map((r) => r.span)
-);
-
 export const genConnectionSolana = () => {
   const connectionSolana = new Connection(
     'https://api.mainnet-beta.solana.com',
@@ -256,7 +253,7 @@ export async function fetchSPLAccount(wallet, mintAddress) {
     const publicKey = new PublicKey(wallet);
     const mintPubkey = new PublicKey(address);
 
-    const fetchInside = async (isLastFetch) => {
+    const fetchInside = async () => {
       const accountToken = await connection.getTokenAccountsByOwner(publicKey, {
         mint: mintPubkey,
       });
@@ -292,6 +289,7 @@ export async function signTransaction(transaction) {
   return window.coin98.sol
     .request({ method: 'sol_sign', params: [transaction] })
     .then((res) => {
+      console.log({ res });
       const sig = bs58.decode(res.signature);
       const publicKey = new PublicKey(res.publicKey);
       transaction.addSignature(publicKey, sig);
@@ -307,13 +305,14 @@ export async function postBaseSendTxs(
   transactions,
   signer,
   isWaitDone,
-  callBack,
-  accountSol
+  callBack
+  // accountSol
 ) {
   try {
-    const { blockhash } = await connection.getRecentBlockhash();
-    let transactionList = new Transaction({ recentBlockhash: blockhash });
-    const publicKey = new PublicKey(accountSol);
+    // const { blockhash } = await connection.getRecentBlockhash();
+    let transactionList = cloneDeep(transactions);
+    console.log({ transactionList });
+    // const publicKey = new PublicKey(accountSol);
     transactions
       .filter((t) => t)
       .forEach((t) => {
@@ -327,7 +326,6 @@ export async function postBaseSendTxs(
       transactionList.partialSign(...getSignerValid);
     }
     const rawTransaction = transactionList.serialize();
-    console.log({ rawTransaction });
     return connection
       .sendRawTransaction(rawTransaction, {
         skipPreflight: false,
@@ -358,6 +356,7 @@ export async function sendTransaction(
   toastNotiWait
 ) {
   try {
+    console.log({ transaction, signers });
     transaction = await signTransaction(transaction);
     if (signers.length > 1) {
       const getSignerValid = signers.slice().filter((it) => it.secretKey);
@@ -452,8 +451,7 @@ export const getInfoTokenByMint = async (mintAddress, accountSol) => {
 export async function awaitTransactionSignatureConfirmationUntil20(
   connection,
   txid,
-  timeout = 50000,
-  poolAddress
+  timeout = 50000
 ) {
   let done = false;
   const result = await new Promise((resolve, reject) => {

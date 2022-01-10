@@ -10,11 +10,9 @@ import {
   TOKEN_PROGRAM_ID,
 } from '../constants';
 import { TokenProgramInstructionService } from '../common/tokenProgramInstructionService';
-import { TokenProgramService } from '../common/tokenProgramService';
 import {
   genOwnerSolana,
   messFail,
-  postBaseSendTxs,
   createAssociatedTokenAccountIfNotExist,
   NATIVE_SOL,
   deserializeAccount,
@@ -22,8 +20,17 @@ import {
   sendTransaction,
 } from '../common/solana';
 import { closeAccount } from '@project-serum/serum/lib/token-instructions';
-import { convertWeiToBalance, renderAmountSlippage } from '../functions';
+import {
+  convertBalanceToWei,
+  convertWeiToBalance,
+  renderAmountSlippage,
+} from '../functions';
 import { cloneDeep } from 'lodash';
+import {
+  findAssociatedTokenAddress,
+  getTokenAccountInfo,
+  getTokenMintInfo,
+} from '../common';
 
 const TRADING_FEE_NUMERATOR = new BN(0);
 const TRADING_FEE_DENOMINATOR = new BN(10000);
@@ -78,7 +85,7 @@ export const findPoolAuthorityAddress = (poolAddress, tokenSwapProgramId) => {
 
 export const createPool = async (
   connection,
-  payerAccount,
+  owner,
   feeOwnerAddress,
   token0MintAddress,
   token1MintAddress,
@@ -89,9 +96,10 @@ export const createPool = async (
   curveType,
   curveParameters,
   tokenProgramId,
-  sarosSwapProgramId,
-  transaction
+  sarosSwapProgramId
 ) => {
+  const transaction = await createTransactions(connection, owner);
+  const payerAccount = await genOwnerSolana(owner);
   const [poolAccountSeed] = await findPoolSeed(sarosSwapProgramId);
   const poolAccount = Keypair.fromSeed(poolAccountSeed.toBuffer());
   const [poolAuthorityAddress] = await findPoolAuthorityAddress(
@@ -120,11 +128,10 @@ export const createPool = async (
     transaction.add(initMintTransaction.instructions[0]);
     transaction.add(initMintTransaction.instructions[1]);
   }
-  const poolToken0Address =
-    await TokenProgramService.findAssociatedTokenAddress(
-      poolAuthorityAddress,
-      token0MintAddress
-    );
+  const poolToken0Address = await findAssociatedTokenAddress(
+    poolAuthorityAddress,
+    token0MintAddress
+  );
   if (!(await SolanaService.isAddressInUse(connection, poolToken0Address))) {
     const createATPATransaction =
       await TokenProgramInstructionService.createAssociatedTokenAccountTransaction(
@@ -134,11 +141,10 @@ export const createPool = async (
       );
     transaction.add(createATPATransaction.instructions[0]);
   }
-  const poolToken1Address =
-    await TokenProgramService.findAssociatedTokenAddress(
-      poolAuthorityAddress,
-      token1MintAddress
-    );
+  const poolToken1Address = await findAssociatedTokenAddress(
+    poolAuthorityAddress,
+    token1MintAddress
+  );
   if (!(await SolanaService.isAddressInUse(connection, poolToken1Address))) {
     const createATPATransaction =
       await TokenProgramInstructionService.createAssociatedTokenAccountTransaction(
@@ -148,11 +154,10 @@ export const createPool = async (
       );
     transaction.add(createATPATransaction.instructions[0]);
   }
-  const poolLpTokenAddress =
-    await TokenProgramService.findAssociatedTokenAddress(
-      payerAccount.publicKey,
-      poolLpMintAccount.publicKey
-    );
+  const poolLpTokenAddress = await findAssociatedTokenAddress(
+    payerAccount.publicKey,
+    poolLpMintAccount.publicKey
+  );
   if (!(await SolanaService.isAddressInUse(connection, poolLpTokenAddress))) {
     const createATPATransaction =
       await TokenProgramInstructionService.createAssociatedTokenAccountTransaction(
@@ -163,11 +168,10 @@ export const createPool = async (
     transaction.add(createATPATransaction.instructions[0]);
   }
 
-  const feeLpTokenAddress =
-    await TokenProgramService.findAssociatedTokenAddress(
-      feeOwnerAddress,
-      poolLpMintAccount.publicKey
-    );
+  const feeLpTokenAddress = await findAssociatedTokenAddress(
+    feeOwnerAddress,
+    poolLpMintAccount.publicKey
+  );
   if (
     payerAccount.publicKey.toBase58() !== feeOwnerAddress.toBase58() &&
     !(await SolanaService.isAddressInUse(connection, feeLpTokenAddress))
@@ -254,14 +258,11 @@ export const createPool = async (
     );
   }
 
-  const result = await postBaseSendTxs(
-    connection,
-    [transaction],
-    [payerAccount.publicKey, poolLpMintAccount, poolAccount],
-    true,
-    null,
-    true
-  );
+  const result = await sendTransaction(connection, transaction, [
+    payerAccount.publicKey,
+    poolLpMintAccount,
+    poolAccount,
+  ]);
   if (messFail.includes(result)) {
     return { isError: true, mess: result };
   } else {
@@ -271,19 +272,21 @@ export const createPool = async (
 
 export const withdrawAllTokenTypes = async (
   connection,
-  payerAccount,
-  delegateAccount,
+  walletAddress,
   userLpTokenAddress,
   userToken0Address,
   userToken1Address,
   lpTokenAmount,
   poolAddress,
   tokenSwapProgramId,
-  transaction,
+
   token0MintAddress,
   token1MintAddress,
   slippage
 ) => {
+  const payerAccount = await genOwnerSolana(walletAddress);
+  const delegateAccount = await genOwnerSolana(walletAddress);
+  const transaction = await createTransactions(connection, walletAddress);
   const [poolAuthorityAddress] = await findPoolAuthorityAddress(
     poolAddress,
     tokenSwapProgramId
@@ -291,7 +294,7 @@ export const withdrawAllTokenTypes = async (
 
   const poolAccountInfo = await getPoolInfo(connection, poolAddress);
 
-  const poolLpMintInfo = await TokenProgramService.getTokenMintInfo(
+  const poolLpMintInfo = await getTokenMintInfo(
     connection,
     poolAccountInfo.lpTokenMint
   );
@@ -306,7 +309,7 @@ export const withdrawAllTokenTypes = async (
   }
   const withdrawLpTokenAmount = lpTokenAmount - feeAmount;
 
-  const poolToken0AccountInfo = await TokenProgramService.getTokenAccountInfo(
+  const poolToken0AccountInfo = await getTokenAccountInfo(
     connection,
     poolAccountInfo.token0Account
   );
@@ -320,7 +323,7 @@ export const withdrawAllTokenTypes = async (
     newAmount0 - renderAmountSlippage(newAmount0, slippage)
   );
 
-  const poolToken1AccountInfo = await TokenProgramService.getTokenAccountInfo(
+  const poolToken1AccountInfo = await getTokenAccountInfo(
     connection,
     poolAccountInfo.token1Account
   );
@@ -353,11 +356,6 @@ export const withdrawAllTokenTypes = async (
     );
   transaction.add(withdrawInstruction);
 
-  // const txSign = await sendAndConfirmTransaction(connection, transaction, [
-  //   payerAccount,
-  //   delegateAccount
-  // ])
-
   if (token0MintAddress.toString() === NATIVE_SOL.mintAddress) {
     transaction.add(
       closeAccount({
@@ -378,16 +376,9 @@ export const withdrawAllTokenTypes = async (
     );
   }
 
-  const result = await postBaseSendTxs(
-    connection,
-    [transaction],
-    [delegateAccount],
-    true,
-    null,
-    null,
-    true,
-    poolAddress.toString()
-  );
+  const result = await sendTransaction(connection, transaction, [
+    delegateAccount,
+  ]);
 
   if (messFail.includes(result)) {
     return { isError: true, mess: result };
@@ -398,28 +389,28 @@ export const withdrawAllTokenTypes = async (
 
 export const depositAllTokenTypes = async (
   connection,
-  payerAccount,
-  delegateAccount,
+  walletAddress,
   userAddress,
   userToken0Address,
   userToken1Address,
   lpTokenAmount,
   poolAddress,
   tokenSwapProgramId,
-  transaction,
   token0MintAddress,
   token1MintAddress,
   slippage
 ) => {
+  const transaction = await createTransactions(connection, walletAddress);
   const poolAccountInfo = await getPoolInfo(connection, poolAddress);
-
-  const poolLpMintInfo = await TokenProgramService.getTokenMintInfo(
+  const payerAccount = await genOwnerSolana(walletAddress);
+  const delegateAccount = await genOwnerSolana(walletAddress);
+  const poolLpMintInfo = await getTokenMintInfo(
     connection,
     poolAccountInfo.lpTokenMint
   );
   const lpTokenSupply = poolLpMintInfo.supply.toNumber();
 
-  const poolToken0AccountInfo = await TokenProgramService.getTokenAccountInfo(
+  const poolToken0AccountInfo = await getTokenAccountInfo(
     connection,
     poolAccountInfo.token0Account
   );
@@ -431,7 +422,7 @@ export const depositAllTokenTypes = async (
     newAmount0 + renderAmountSlippage(newAmount0, slippage)
   );
 
-  const poolToken1AccountInfo = await TokenProgramService.getTokenAccountInfo(
+  const poolToken1AccountInfo = await getTokenAccountInfo(
     connection,
     poolAccountInfo.token1Account
   );
@@ -447,11 +438,10 @@ export const depositAllTokenTypes = async (
     poolAddress,
     tokenSwapProgramId
   );
-  const userLpTokenAddress =
-    await TokenProgramService.findAssociatedTokenAddress(
-      userAddress,
-      poolAccountInfo.lpTokenMint
-    );
+  const userLpTokenAddress = await findAssociatedTokenAddress(
+    userAddress,
+    poolAccountInfo.lpTokenMint
+  );
 
   if (!(await SolanaService.isAddressInUse(connection, userLpTokenAddress))) {
     const createATPATransaction =
@@ -503,16 +493,9 @@ export const depositAllTokenTypes = async (
     );
   }
 
-  const result = await postBaseSendTxs(
-    connection,
-    [transaction],
-    [delegateAccount],
-    true,
-    null,
-    null,
-    true,
-    poolAddress.toString()
-  );
+  const result = await sendTransaction(connection, transaction, [
+    delegateAccount,
+  ]);
 
   if (messFail.includes(result)) {
     return { isError: true, mess: result };
@@ -525,15 +508,16 @@ export const swapSaros = async (
   connection,
   userTokenSourceAddress,
   userTokenDestinationAddress,
-  amountIn,
-  minimumAmountOut,
+  amountFrom,
+  minimumAmountTo,
   hostFeeOwnerAddress,
   poolAddress,
   walletAddress,
   fromCoinMint,
-  toCoinMint,
-  toastNotiWait
+  toCoinMint
 ) => {
+  const amountIn = convertBalanceToWei(amountFrom);
+  const minimumAmountOut = convertBalanceToWei(minimumAmountTo);
   const transaction = await createTransactions(connection, walletAddress);
   const tokenSwapProgramId = SAROS_SWAP_PROGRAM_ADDRESS_V1;
   const owner = await genOwnerSolana(walletAddress);
@@ -583,7 +567,7 @@ export const swapSaros = async (
 
   let hostFeeTokenAddress = null;
   if (hostFeeOwnerAddress) {
-    hostFeeTokenAddress = await TokenProgramService.findAssociatedTokenAddress(
+    hostFeeTokenAddress = await findAssociatedTokenAddress(
       hostFeeOwnerAddress,
       poolAccountInfo.lpTokenMint
     );
@@ -638,12 +622,7 @@ export const swapSaros = async (
     );
   }
 
-  const hash = await sendTransaction(
-    connection,
-    transaction,
-    signers,
-    toastNotiWait
-  );
+  const hash = await sendTransaction(connection, transaction, signers);
   if (messFail.includes(hash)) {
     return { isError: true, mess: hash };
   }
